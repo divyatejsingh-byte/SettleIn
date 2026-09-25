@@ -3,7 +3,7 @@
 A shared decision tool for three flatmates hunting for a 3BHK in Pune. Paste a listing and SettleIn instantly tells you whether it works for everyone, or exactly who is being asked to compromise and why.
 
 - Next.js 16 (App Router) · Tailwind CSS 4 · Lucide icons · TypeScript (strict)
-- All evaluation runs client-side. The shortlist is shared through a small API route backed by Upstash Redis, and falls back to `localStorage` when no database is connected.
+- All evaluation runs client-side. The shortlist is shared through a small API route backed by Supabase (Postgres), and falls back to `localStorage` when no database is connected.
 
 ## Run
 
@@ -16,14 +16,17 @@ npm run lint
 
 Deploy by importing the repo into Vercel.
 
-## Shared memory (Upstash Redis)
+## Shared memory (Supabase)
 
 Without a database, each browser keeps its own copy (the badge next to **Shortlist** reads *This device only*). To give all three flatmates one shared, live shortlist:
 
-1. In your Vercel project, open **Storage → Create Database → Upstash (Redis)**, pick the free plan, and connect it to the project.
-2. Redeploy. Vercel injects the connection variables automatically, and the badge switches to *Shared · live*.
+1. **Create the tables.** In Supabase, open **SQL Editor → New query**, paste [`supabase/schema.sql`](supabase/schema.sql), and click **Run**. This creates `listings` and `app_settings`, turns on row-level security, and adds the 4 demo flats.
+2. **Give Vercel the connection details**, either way:
+   - *Integration:* Supabase dashboard → **Integrations → Vercel**, and connect the SettleIn project. The variables are synced for you.
+   - *By hand:* Vercel project → **Settings → Environment Variables**, and add `SUPABASE_URL` (Project URL) and `SUPABASE_SECRET_KEY` (a **secret** key, or the legacy `service_role` key) from Supabase → **Project Settings → API Keys**.
+3. **Redeploy.** The badge switches to *Shared · live*.
 
-The first request seeds the 4 demo flats. The app reads `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN`, or the `KV_REST_API_URL` / `KV_REST_API_TOKEN` pair. For local dev against the real database, run `vercel env pull .env.local`.
+The app also accepts `NEXT_PUBLIC_SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`. The key is only read on the server (`lib/server/db.ts`) and never reaches the browser. For local dev, put the same two variables in `.env.local`, which git ignores.
 
 Anyone with the site link can view and edit the shortlist.
 
@@ -35,7 +38,8 @@ Anyone with the site link can view and edit the shortlist.
 | `lib/roommates.ts` | Roommate identities, avatars, default budgets/thresholds |
 | `lib/demo-listings.ts` | The 4 pre-loaded Pune listings |
 | `lib/store.ts` | Client store: optimistic edits, polling sync, `localStorage` cache/fallback |
-| `app/api/state/route.ts`, `lib/server/db.ts` | Shared-state API and Redis access |
+| `app/api/state/route.ts`, `lib/server/db.ts` | Shared-state API and Supabase access |
+| `supabase/schema.sql` | Tables, row-level security, demo data |
 | `lib/validate.ts` | Input validation shared by browser and server |
 | `components/` | Hero, profiles, listing cards, add-listing and story modals |
 

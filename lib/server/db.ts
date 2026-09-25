@@ -1,20 +1,15 @@
-import { Redis } from "@upstash/redis";
+import { createClient, type PostgrestError, type SupabaseClient } from "@supabase/supabase-js";
 import { DEMO_LISTINGS } from "../demo-listings";
-import { DEFAULT_SETTINGS } from "../roommates";
 import type { Listing, Settings } from "../types";
 import { parseListing, parseSettings } from "../validate";
 
-// Vercel's Upstash integration injects either the UPSTASH_* or the legacy KV_* names.
-const url = process.env.UPSTASH_REDIS_REST_URL ?? process.env.KV_REST_API_URL;
-const token = process.env.UPSTASH_REDIS_REST_TOKEN ?? process.env.KV_REST_API_TOKEN;
+// Accept the names used by Supabase's Vercel integration as well as manually added ones.
+// The secret (service-role) key bypasses row-level security, so it must only ever be read here, on the server.
+const url = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL;
+const secretKey = process.env.SUPABASE_SECRET_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-const redis = url && token ? new Redis({ url, token, automaticDeserialization: false }) : null;
-
-const KEYS = {
-  listings: "settlein:listings", // hash: listing id -> listing JSON
-  settings: "settlein:settings", // string: settings JSON
-  seeded: "settlein:seeded",
-} as const;
+const supabase: SupabaseClient | null =
+  url && secretKey ? createClient(url, secretKey, { auth: { persistSession: false, autoRefreshToken: false } }) : null;
 
 export interface SharedState {
   listings: Listing[];
@@ -27,62 +22,109 @@ export class StorageNotConfiguredError extends Error {
   }
 }
 
-function db(): Redis {
-  if (!redis) throw new StorageNotConfiguredError();
-  return redis;
+function db(): SupabaseClient {
+  if (!supabase) throw new StorageNotConfiguredError();
+  return supabase;
 }
 
-function safeJson(raw: unknown): unknown {
-  if (typeof raw !== "string") return null;
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return null;
+interface ListingRow {
+  id: string;
+  title: string;
+  total_rent: number;
+  deposit: number;
+  floor: number;
+  has_lift: boolean;
+  has_parking: boolean;
+  pet_friendly: boolean;
+  bathrooms: number;
+  hinjewadi_commute: number;
+  gym_commute: number;
+  added_by: string;
+  created_at: number | string; // Postgres bigint may arrive as a string
+}
+
+function toRow(l: Listing): ListingRow {
+  return {
+    id: l.id,
+    title: l.title,
+    total_rent: l.totalRent,
+    deposit: l.deposit,
+    floor: l.floor,
+    has_lift: l.hasLift,
+    has_parking: l.hasParking,
+    pet_friendly: l.petFriendly,
+    bathrooms: l.bathrooms,
+    hinjewadi_commute: l.hinjewadiCommute,
+    gym_commute: l.gymCommute,
+    added_by: l.addedBy,
+    created_at: l.createdAt,
+  };
+}
+
+function fromRow(r: ListingRow): Listing | null {
+  return parseListing({
+    id: r.id,
+    title: r.title,
+    totalRent: r.total_rent,
+    deposit: r.deposit,
+    floor: r.floor,
+    hasLift: r.has_lift,
+    hasParking: r.has_parking,
+    petFriendly: r.pet_friendly,
+    bathrooms: r.bathrooms,
+    hinjewadiCommute: r.hinjewadi_commute,
+    gymCommute: r.gym_commute,
+    addedBy: r.added_by,
+    createdAt: Number(r.created_at),
+  });
+}
+
+function check(error: PostgrestError | null): void {
+  if (!error) return;
+  // PGRST205 / 42P01: the tables don't exist yet.
+  if (error.code === "PGRST205" || error.code === "42P01") {
+    throw new Error("SettleIn tables are missing. Run supabase/schema.sql in the Supabase SQL Editor.");
   }
-}
-
-function listingEntries(listings: readonly Listing[]): Record<string, string> {
-  return Object.fromEntries(listings.map((l) => [l.id, JSON.stringify(l)]));
-}
-
-/** Puts the demo flats and default settings in place the very first time the database is used. */
-async function ensureSeeded(): Promise<void> {
-  const first = await db().set(KEYS.seeded, "1", { nx: true });
-  if (first !== "OK") return;
-  await Promise.all([
-    db().hset(KEYS.listings, listingEntries(DEMO_LISTINGS)),
-    db().set(KEYS.settings, JSON.stringify(DEFAULT_SETTINGS)),
-  ]);
+  throw new Error(`Supabase error ${error.code}: ${error.message}`);
 }
 
 export async function readState(): Promise<SharedState> {
-  await ensureSeeded();
-  const [rawListings, rawSettings] = await Promise.all([
-    db().hgetall<Record<string, string>>(KEYS.listings),
-    db().get<string>(KEYS.settings),
+  const [listingsRes, settingsRes] = await Promise.all([
+    db().from("listings").select("*"),
+    db().from("app_settings").select("data").eq("id", "default").maybeSingle(),
   ]);
-  const listings = Object.values(rawListings ?? {})
-    .map((raw) => parseListing(safeJson(raw)))
+  check(listingsRes.error);
+  check(settingsRes.error);
+  const listings = ((listingsRes.data ?? []) as ListingRow[])
+    .map(fromRow)
     .filter((l): l is Listing => l !== null);
-  return { listings, settings: parseSettings(safeJson(rawSettings)) };
+  return { listings, settings: parseSettings(settingsRes.data?.data) };
 }
 
 export async function countListings(): Promise<number> {
-  return db().hlen(KEYS.listings);
+  const { count, error } = await db().from("listings").select("id", { count: "exact", head: true });
+  check(error);
+  return count ?? 0;
 }
 
 export async function putListing(listing: Listing): Promise<void> {
-  await db().hset(KEYS.listings, { [listing.id]: JSON.stringify(listing) });
+  const { error } = await db().from("listings").upsert(toRow(listing));
+  check(error);
 }
 
 export async function deleteListing(id: string): Promise<void> {
-  await db().hdel(KEYS.listings, id);
+  const { error } = await db().from("listings").delete().eq("id", id);
+  check(error);
 }
 
 export async function restoreDemoListings(): Promise<void> {
-  await db().hset(KEYS.listings, listingEntries(DEMO_LISTINGS));
+  const { error } = await db().from("listings").upsert(DEMO_LISTINGS.map(toRow));
+  check(error);
 }
 
 export async function writeSettings(settings: Settings): Promise<void> {
-  await db().set(KEYS.settings, JSON.stringify(settings));
+  const { error } = await db()
+    .from("app_settings")
+    .upsert({ id: "default", data: settings, updated_at: new Date().toISOString() });
+  check(error);
 }

@@ -15,6 +15,11 @@ function numberIn(value: unknown, min: number, max: number): number | null {
   return typeof value === "number" && Number.isFinite(value) && value >= min && value <= max ? value : null;
 }
 
+function intIn(value: unknown, min: number, max: number): number | null {
+  const n = numberIn(value, min, max);
+  return n !== null && Number.isInteger(n) ? n : null;
+}
+
 function isRoommateId(value: unknown): value is RoommateId {
   return typeof value === "string" && (ROOMMATE_IDS as readonly string[]).includes(value);
 }
@@ -23,12 +28,13 @@ function isRoommateId(value: unknown): value is RoommateId {
 export function parseListingInput(value: unknown): ListingInput | null {
   if (!isRecord(value)) return null;
   const title = typeof value.title === "string" ? value.title.trim().slice(0, MAX_TITLE_LENGTH) : "";
-  const totalRent = numberIn(value.totalRent, 1, 10_000_000);
-  const deposit = numberIn(value.deposit, 0, 100_000_000);
-  const floor = numberIn(value.floor, 0, 200);
-  const bathrooms = numberIn(value.bathrooms, 1, 20);
-  const hinjewadiCommute = numberIn(value.hinjewadiCommute, 0, 600);
-  const gymCommute = numberIn(value.gymCommute, 0, 600);
+  // Whole numbers only: they map onto integer columns in the database.
+  const totalRent = intIn(value.totalRent, 1, 10_000_000);
+  const deposit = intIn(value.deposit, 0, 100_000_000);
+  const floor = intIn(value.floor, 0, 200);
+  const bathrooms = intIn(value.bathrooms, 1, 20);
+  const hinjewadiCommute = intIn(value.hinjewadiCommute, 0, 600);
+  const gymCommute = intIn(value.gymCommute, 0, 600);
 
   if (
     title === "" ||
