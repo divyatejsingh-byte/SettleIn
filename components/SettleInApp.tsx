@@ -10,6 +10,7 @@ import Hero from "./Hero";
 import ListingCard from "./ListingCard";
 import RoommateProfiles from "./RoommateProfiles";
 import StoryModal from "./StoryModal";
+import SyncBadge from "./SyncBadge";
 import { TIER_STYLES } from "./tiers";
 
 const TIER_ORDER: Record<Tier, number> = { green: 0, orange: 1, red: 2 };
@@ -22,7 +23,7 @@ const FILTERS: { id: TierFilter; label: string; active: string }[] = [
 ];
 
 export default function SettleInApp() {
-  const { listings, settings } = useAppState();
+  const { listings, settings, sync } = useAppState();
   const [filter, setFilter] = useState<TierFilter>("all");
   const [addOpen, setAddOpen] = useState(false);
   const [storyOpen, setStoryOpen] = useState(false);
@@ -57,9 +58,13 @@ export default function SettleInApp() {
     setFilter("all");
   }, []);
 
-  const handleRemove = useCallback((listing: Listing) => {
-    if (window.confirm(`Remove “${listing.title}” from the shortlist?`)) actions.removeListing(listing.id);
-  }, []);
+  const handleRemove = useCallback(
+    (listing: Listing) => {
+      const who = sync === "shared" ? " for everyone" : "";
+      if (window.confirm(`Remove “${listing.title}” from the shortlist${who}?`)) actions.removeListing(listing.id);
+    },
+    [sync],
+  );
 
   return (
     <main className="mx-auto flex w-full max-w-6xl flex-col gap-10 px-4 pb-24 pt-4 sm:px-6 sm:pt-8">
@@ -79,10 +84,13 @@ export default function SettleInApp() {
       <section aria-labelledby="listings-heading" className="space-y-5">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <h2 id="listings-heading" className="flex items-center gap-2 text-xl font-bold text-stone-900">
-              <House className="size-5 text-rose-400" aria-hidden="true" />
-              Shortlist
-            </h2>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+              <h2 id="listings-heading" className="flex items-center gap-2 text-xl font-bold text-stone-900">
+                <House className="size-5 text-rose-400" aria-hidden="true" />
+                Shortlist
+              </h2>
+              <SyncBadge status={sync} onRetry={actions.retrySync} />
+            </div>
             <p className="mt-1 text-sm text-stone-500">
               Sorted so the flats that work for everyone come first. Verdicts update as you tweak the profiles.
             </p>
@@ -167,7 +175,9 @@ export default function SettleInApp() {
       </section>
 
       <footer className="text-center text-xs text-stone-400">
-        Made for Riya, Meera &amp; Kavita. Everything stays in this browser, with no accounts and no API keys.
+        Made for Riya, Meera &amp; Kavita. {sync === "local"
+          ? "Everything stays in this browser, with no accounts needed."
+          : "One shared shortlist for all three of you, with no accounts needed."}
       </footer>
 
       <AddListingModal open={addOpen} settings={settings} onClose={closeAdd} onSubmit={handleAdd} />
